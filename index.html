@@ -198,7 +198,10 @@
         .header-center {
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 12px;
+            flex: 1;
+            margin-right: 120px;
         }
         .header-center img {
             width: 36px;
@@ -890,7 +893,7 @@
             <div class="header-right">
                 <span id="account-info">账号: YZH测试</span>
                 <div class="settings-container">
-                    <svg class="settings-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="3.2"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/><circle cx="12" cy="12" r="3.2"/></svg>
+                    <svg class="settings-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/><path d="M19.4 12.5a.5.5 0 0 0 0-.1l2.1-1.6a.5.5 0 0 0 .1-.7l-2-3.5a.5.5 0 0 0-.7-.2l-2.4 1a5.5 5.5 0 0 0-1.7-1l-.4-2.6a.5.5 0 0 0-.6-.3h-4a.5.5 0 0 0-.6.3l-.4 2.6a5.5 5.5 0 0 0-1.7 1l-2.4-1a.5.5 0 0 0-.7.2l-2 3.5a.5.5 0 0 0 .1.7l2.1 1.6a.5.5 0 0 0 0 .1 5.5 5.5 0 0 0 0 1 5.5 5.5 0 0 0 0 .1l-2.1 1.6a.5.5 0 0 0-.1.7l2 3.5a.5.5 0 0 0 .7.2l2.4-1a5.5 5.5 0 0 0 1.7 1l.4 2.6a.5.5 0 0 0 .6.3h4a.5.5 0 0 0 .6-.3l.4-2.6a5.5 5.5 0 0 0 1.7-1l2.4 1a.5.5 0 0 0 .7-.2l2-3.5a.5.5 0 0 0-.1-.7l-2.1-1.6a5.5 5.5 0 0 0 0-1z"/></svg>
                     <div id="settings-dropdown" class="settings-dropdown">
                         <div class="dropdown-item" id="logout-item">退出登录</div>
                         <div class="dropdown-item" id="broadcast-item">群发</div>
@@ -906,7 +909,7 @@
                 </div>
                 <div class="search-container">
                     <div class="search-input-wrapper">
-                        <input type="text" id="room-search" placeholder="搜索房间名称" class="search-input">
+                        <input type="text" id="room-search" placeholder="搜索用户" class="search-input">
                         <svg class="search-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
                     </div>
                 </div>
@@ -1003,6 +1006,88 @@ document.addEventListener('DOMContentLoaded', () => {
     let localVoiceDurations = new Map(); // 存储本地计算的语音时长，key为msgId
 
     // --- 工具函数 ---
+
+    /**
+     * AES加密函数（与Python版本逻辑一致）
+     * @param {Object} dataDict - 要加密的数据对象
+     * @param {string} secretKey - 密钥
+     * @returns {string} - Base64编码的加密结果
+     */
+    function aesEncrypt(dataDict, secretKey) {
+        try {
+            // 1. 密钥处理：原始密钥→MD5（32位16进制字符串）→Latin1编码（32字节，AES-256密钥）
+            const md5Hash = CryptoJS.MD5(secretKey).toString();
+            const key = CryptoJS.enc.Latin1.parse(md5Hash); // 32字节密钥
+            
+            // 2. IV：取密钥前16字节（CBC模式要求）
+            const iv = CryptoJS.enc.Latin1.parse(md5Hash.substring(0, 16));
+            
+            // 3. 数据预处理：JSON序列化→UTF-8编码→PKCS7填充
+            const dataStr = JSON.stringify(dataDict);
+            const dataWords = CryptoJS.enc.Utf8.parse(dataStr);
+            
+            // 4. AES-CBC加密
+            const encrypted = CryptoJS.AES.encrypt(dataWords, key, {
+                iv: iv,
+                mode: CryptoJS.mode.CBC,
+                padding: CryptoJS.pad.Pkcs7
+            });
+            
+            // 5. 返回Base64编码的密文
+            return encrypted.toString();
+        } catch (error) {
+            console.error('AES加密失败:', error);
+            return null;
+        }
+    }
+
+    /**
+     * AES解密函数（与Python版本逻辑一致）
+     * @param {string} cipherText - Base64编码的密文
+     * @param {string} secretKey - 密钥
+     * @returns {string} - 解密后的JSON字符串
+     */
+    function aesDecrypt(cipherText, secretKey) {
+        try {
+            // 1. 密钥处理：原始密钥→MD5（32位16进制字符串）→Latin1编码（32字节，AES-256密钥）
+            const md5Hash = CryptoJS.MD5(secretKey).toString();
+            const key = CryptoJS.enc.Latin1.parse(md5Hash); // 32字节密钥
+            
+            // 2. IV：取密钥前16字节（CBC模式要求）
+            const iv = CryptoJS.enc.Latin1.parse(md5Hash.substring(0, 16));
+            
+            // 3. Base64解码并解密
+            const decrypted = CryptoJS.AES.decrypt(cipherText, key, {
+                iv: iv,
+                mode: CryptoJS.mode.CBC,
+                padding: CryptoJS.pad.Pkcs7
+            });
+            
+            // 4. 返回UTF-8编码的解密结果
+            return decrypted.toString(CryptoJS.enc.Utf8);
+        } catch (error) {
+            console.error('AES解密失败:', error);
+            return null;
+        }
+    }
+
+    /**
+     * 构造确认帧（对应Python版本create_ack_frame）
+     * @param {string} originalMsgId - 原始消息的msgId
+     * @returns {Object} - 确认帧对象
+     */
+    function createAckFrame(originalMsgId) {
+        return {
+            msgType: 2,  // 固定2=确认帧
+            code: "",    // 确认帧无需业务code
+            msgId: "",   // 确认帧无需新msgId
+            ask: false,  // 确认帧无需服务端回复
+            askId: originalMsgId,  // 关联原始消息的msgId
+            data: "",    // 确认帧无业务数据
+            reply: true, // 标记为"回复消息"
+            remark: ""   // 预留字段
+        };
+    }
 
     /**
      * 检查必要的库是否加载
@@ -1427,28 +1512,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const result = await response.json();
 
-            if (result && result.code === 0 && result.data && result.data.length > 0) {
-                // 获取用户信息
-                const userInfo = result.data[0];
-                const avatarUrl = userInfo.avatar_url || '';
-                const userId = userInfo.id || '';
-                
-                console.log('获取用户档案成功:', { avatarUrl, userId });
-                
-                // 使用获取的id调用详情档案接口
-                if (userId) {
-                    const detailUrl = `https://admin.11yzh.com/index/archives?archives_id=${userId}`;
-                    console.log('准备调用详情档案接口:', detailUrl);
+            if (result && result.code === 0) {
+                if (result.data && result.data.length > 0) {
+                    // 获取用户信息
+                    const userInfo = result.data[0];
+                    const avatarUrl = userInfo.avatar_url || '';
+                    const userId = userInfo.id || '';
                     
-                    // 这里可以根据需要处理详情档案接口的响应
-                    // 由于用户只要求调用这个接口用于显示详情档案，我们可以在UI中跳转或显示
-                    // 这里仅记录日志，实际应用中可以根据需求进行处理
+                    console.log('获取用户档案成功:', { avatarUrl, userId });
+                    
+                    // 使用获取的id调用详情档案接口
+                    if (userId) {
+                        const detailUrl = `https://admin.11yzh.com/index/archives?archives_id=${userId}`;
+                        console.log('准备调用详情档案接口:', detailUrl);
+                    }
+                    
+                    return {
+                        avatar_url: avatarUrl,
+                        id: userId
+                    };
+                } else {
+                    // 数据为空，可能是用户不存在
+                    console.warn('获取用户档案为空，用户可能不存在:', result);
+                    return { avatar_url: '', id: '' };
                 }
-                
-                return {
-                    avatar_url: avatarUrl,
-                    id: userId
-                };
             } else {
                 console.error('获取用户档案失败:', result);
                 return { avatar_url: '', id: '' };
@@ -1631,9 +1718,7 @@ document.addEventListener('DOMContentLoaded', () => {
                  bodyContent = `<span>${room.cate_name}</span>`;
             }
 
-            if(hasMessages){
-                footerContent += `<span class="count-badge">${room.count}条</span>`;
-            }
+
 
             const cardHTML = `
                 <div class="room-card ${cardClass}" data-room-id="${room.id}" data-room-name="${room.name}">
@@ -1644,7 +1729,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     <div class="card-header">
                         <span class="name">${room.name}</span>
-                        ${!isOnline ? `<span class="card-tag ${hasMessages ? 'tag-red' : 'tag-gray'}">未满</span>` : ''}
+                        ${!isOnline ? `<span class="card-tag ${hasMessages ? 'tag-red' : 'tag-gray'}">未绑</span>` : ''}
                     </div>
                     <div class="card-body">
                        ${bodyContent}
@@ -2053,6 +2138,8 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
     }
+
+
 
     /**
      * 更新房间未读计数
@@ -2712,7 +2799,563 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     /**
-     * 连接WebSocket
+     * 发送确认帧
+     * @param {WebSocket} websocket - WebSocket连接对象
+     * @param {string} originalMsgId - 原始消息的msgId
+     */
+    function sendAckFrame(websocket, originalMsgId) {
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+            console.error('WebSocket连接不可用，无法发送确认帧');
+            return;
+        }
+
+        // 1. 构造确认帧
+        const ackFrame = createAckFrame(originalMsgId);
+        console.log(`[${new Date().toLocaleString()}] 构造确认帧:`, ackFrame);
+
+        // 2. AES加密确认帧
+        const encryptedAck = aesEncrypt(ackFrame, config.secret_key);
+        if (!encryptedAck) {
+            console.error('确认帧加密失败，跳过发送');
+            return;
+        }
+
+        // 3. 发送确认帧
+        try {
+            websocket.send(encryptedAck);
+            console.log(`[${new Date().toLocaleString()}] 确认帧发送成功（密文前50字符）: ${encryptedAck.substring(0, 50)}...`);
+        } catch (error) {
+            console.error('确认帧发送失败:', error);
+        }
+    }
+
+    /**
+     * 处理解密后的消息
+     * @param {Object} messageData - 解密后的消息对象
+     */
+    function handleDecryptedMessage(messageData) {
+        try {
+            if (!messageData || typeof messageData !== 'object') {
+                console.warn('无效的消息数据格式');
+                return;
+            }
+
+            console.log(`[${new Date().toLocaleString()}] 处理解密消息:`, messageData);
+
+            // 根据消息类型处理
+            if (messageData.code === 'auto_success') {
+                console.log('认证成功消息:', messageData.data);
+                return;
+            }
+
+            // 处理语音消息
+            if (messageData.code === 'voice') {
+                try {
+                    if (!messageData.data) {
+                        console.warn('语音消息数据为空');
+                        return;
+                    }
+
+                    // 安全解析JSON数据（处理可能的截断问题）
+                    let voiceData;
+                    try {
+                        const dataStr = typeof messageData.data === 'string' ? messageData.data : JSON.stringify(messageData.data);
+                        
+                        // 检查JSON字符串是否完整
+                        if (!isValidJsonString(dataStr)) {
+                            console.warn('JSON字符串不完整，尝试修复...');
+                            console.log('原始数据:', dataStr);
+                            
+                            // 针对具体错误进行修复
+                            let fixedData = null;
+                            
+                            // 检查是否包含特定截断模式
+                            if (dataStr.includes('"https:\\/\\/asset') && dataStr.endsWith('"')) {
+                                // 这种情况可能是完整的，尝试解析
+                                try {
+                                    voiceData = JSON.parse(dataStr);
+                                } catch (e) {
+                                    // 手动修复URL截断
+                                    console.log('检测到URL截断，尝试手动修复...');
+                                    
+                                    // 提取基本结构
+                                    const roomIdMatch = dataStr.match(/"room_id":(\d+)/);
+                                    const roomNameMatch = dataStr.match(/"room_name":"([^"]*)"/);
+                                    const msgFileMatch = dataStr.match(/"msg_file":"([^"]*)"/);
+                                    
+                                    if (roomIdMatch && roomNameMatch) {
+                                        voiceData = {
+                                            room_id: parseInt(roomIdMatch[1]),
+                                            room_name: roomNameMatch[1],
+                                            msg_file: msgFileMatch ? msgFileMatch[1] : '',
+                                            msg_id: 'fixed_' + Date.now(),
+                                            is_root: 0,
+                                            duration: 0
+                                        };
+                                        console.log('使用手动修复的语音数据:', voiceData);
+                                    } else {
+                                        // 使用最小有效数据
+                                        voiceData = {
+                                            room_id: 0,
+                                            room_name: '未知房间',
+                                            msg_file: '',
+                                            msg_id: 'minimal_' + Date.now(),
+                                            is_root: 0,
+                                            duration: 0
+                                        };
+                                    }
+                                }
+                            } else {
+                                // 使用通用修复机制
+                                fixedData = tryFixTruncatedJson(dataStr);
+                                if (fixedData) {
+                                    voiceData = JSON.parse(fixedData);
+                                    console.log('通用修复成功');
+                                } else {
+                                    console.error('无法修复JSON，使用最小数据');
+                                    voiceData = {
+                                        room_id: 0,
+                                        room_name: '未知房间',
+                                        msg_file: '',
+                                        msg_id: 'minimal_' + Date.now(),
+                                        is_root: 0,
+                                        duration: 0
+                                    };
+                                }
+                            }
+                            
+                            if (!voiceData) return;
+                        } else {
+                            voiceData = JSON.parse(dataStr);
+                        }
+                    } catch (parseError) {
+                        console.error('JSON解析失败:', parseError, '尝试修复JSON...');
+                        
+                        // 尝试修复截断的JSON
+                        const fixedData = tryFixTruncatedJson(messageData.data);
+                        if (fixedData) {
+                            voiceData = JSON.parse(fixedData);
+                            console.log('JSON修复成功');
+                        } else {
+                            console.error('无法修复JSON，使用最小数据');
+                            voiceData = {
+                                room_id: 0,
+                                room_name: '未知房间',
+                                msg_file: '',
+                                msg_id: 'minimal_' + Date.now(),
+                                is_root: 0,
+                                duration: 0
+                            };
+                        }
+                    }
+                    
+                    if (!voiceData || typeof voiceData !== 'object') {
+                        console.warn('解析后的语音消息数据无效');
+                        return;
+                    }
+
+                    console.log('\n===== 语音消息详情 =====');
+                    console.log(`房间名称: ${voiceData.room_name || '未知'}`);
+                    console.log(`语音URL: ${voiceData.msg_file || '无'}`);
+                    console.log(`语音时长: ${voiceData.duration || 0} 秒`);
+                    console.log(`是否已读: ${voiceData.is_read === 1 ? '是' : '否'}`);
+                    console.log('=======================\n');
+
+                    const roomName = voiceData.room_name;
+                    const roomId = voiceData.room_id;
+                    
+                    if (roomName) {
+                        triggerRoomBreathing(roomName);
+                        
+                        handleNewMessageNotification({
+                            roomId: roomId,
+                            roomName: roomName,
+                            messageType: 'voice'
+                        });
+                    }
+
+                    // 如果当前在对应的房间，刷新消息列表
+                    if (state.current_room_id === roomId && typeof fetchVoiceMessages === 'function') {
+                        fetchVoiceMessages(state.current_room_id).then(messages => {
+                            if (messages && messages.length > 0) {
+                                renderVoiceMessages(messages);
+                                scrollToLatestMessage();
+                            }
+                        }).catch(err => {
+                            console.error('获取语音消息失败:', err);
+                        });
+                    }
+                } catch (error) {
+                    console.error('解析语音消息数据失败:', error, '原始数据:', messageData.data);
+                }
+            }
+
+            // 处理文本消息
+            if (messageData.code === 'text') {
+                try {
+                    if (!messageData.data) {
+                        console.warn('文本消息数据为空');
+                        return;
+                    }
+
+                    let textData;
+                    try {
+                        const dataStr = typeof messageData.data === 'string' ? messageData.data : JSON.stringify(messageData.data);
+                        
+                        if (!isValidJsonString(dataStr)) {
+                            console.warn('JSON字符串不完整，尝试修复...');
+                            console.log('原始数据:', dataStr);
+                            
+                            // 针对具体错误进行修复
+                            let fixedData = null;
+                            
+                            // 检查是否包含特定截断模式
+                            if (dataStr.includes('"content":"') && !dataStr.endsWith('"}')) {
+                                console.log('检测到内容截断，尝试手动修复...');
+                                
+                                // 提取基本结构
+                                const roomIdMatch = dataStr.match(/"room_id":(\d+)/);
+                                const roomNameMatch = dataStr.match(/"room_name":"([^"]*)"/);
+                                const contentMatch = dataStr.match(/"content":"([^"]*)"/);
+                                
+                                if (roomIdMatch && roomNameMatch) {
+                                    textData = {
+                                        room_id: parseInt(roomIdMatch[1]),
+                                        room_name: roomNameMatch[1],
+                                        content: contentMatch ? contentMatch[1] : '',
+                                        msg_id: 'fixed_' + Date.now(),
+                                        is_root: 0,
+                                        sender: 'unknown'
+                                    };
+                                    console.log('使用手动修复的文本数据:', textData);
+                                } else {
+                                    // 使用最小有效数据
+                                    textData = {
+                                        room_id: 0,
+                                        room_name: '未知房间',
+                                        content: '',
+                                        msg_id: 'minimal_' + Date.now(),
+                                        is_root: 0,
+                                        sender: 'unknown'
+                                    };
+                                }
+                            } else {
+                                // 使用通用修复机制
+                                fixedData = tryFixTruncatedJson(dataStr);
+                                if (fixedData) {
+                                    textData = JSON.parse(fixedData);
+                                    console.log('通用修复成功');
+                                } else {
+                                    console.error('无法修复JSON，使用最小数据');
+                                    textData = {
+                                        room_id: 0,
+                                        room_name: '未知房间',
+                                        content: '',
+                                        msg_id: 'minimal_' + Date.now(),
+                                        is_root: 0,
+                                        sender: 'unknown'
+                                    };
+                                }
+                            }
+                            
+                            if (!textData) return;
+                        } else {
+                            textData = JSON.parse(dataStr);
+                        }
+                    } catch (parseError) {
+                        console.error('JSON解析失败:', parseError, '尝试修复JSON...');
+                        
+                        const fixedData = tryFixTruncatedJson(messageData.data);
+                        if (fixedData) {
+                            textData = JSON.parse(fixedData);
+                            console.log('JSON修复成功');
+                        } else {
+                            console.error('无法修复JSON，使用最小数据');
+                            textData = {
+                                room_id: 0,
+                                room_name: '未知房间',
+                                content: '',
+                                msg_id: 'minimal_' + Date.now(),
+                                is_root: 0,
+                                sender: 'unknown'
+                            };
+                        }
+                    }
+                    
+                    if (!textData || typeof textData !== 'object') {
+                        console.warn('解析后的文本消息数据无效');
+                        return;
+                    }
+
+                    console.log('\n===== 文本消息详情 =====');
+                    console.log(`房间名称: ${textData.room_name || '未知'}`);
+                    console.log(`消息内容: ${textData.content || '无'}`);
+                    console.log(`发送者: ${textData.sender || '未知'}`);
+                    console.log('=======================\n');
+
+                    const roomName = textData.room_name;
+                    const roomId = textData.room_id;
+                    
+                    if (roomName) {
+                        triggerRoomBreathing(roomName);
+                        
+                        handleNewMessageNotification({
+                            roomId: roomId,
+                            roomName: roomName,
+                            messageType: 'text'
+                        });
+                    }
+
+                    // 如果当前在对应的房间，刷新消息列表
+                    if (state.current_room_id === roomId && typeof fetchVoiceMessages === 'function') {
+                        fetchVoiceMessages(state.current_room_id).then(messages => {
+                            if (messages && messages.length > 0) {
+                                renderVoiceMessages(messages);
+                                scrollToLatestMessage();
+                            }
+                        }).catch(err => {
+                            console.error('获取文本消息失败:', err);
+                        });
+                    }
+                } catch (error) {
+                    console.error('解析文本消息数据失败:', error, '原始数据:', messageData.data);
+                }
+            }
+
+            // 处理其他类型的消息
+            if (messageData.code && messageData.data) {
+                try {
+                    let messageContent;
+                    try {
+                        const dataStr = typeof messageData.data === 'string' ? messageData.data : JSON.stringify(messageData.data);
+                        
+                        if (!isValidJsonString(dataStr)) {
+                            console.warn('JSON字符串不完整，跳过处理:', dataStr.substring(0, 100));
+                            return;
+                        }
+                        
+                        messageContent = JSON.parse(dataStr);
+                    } catch (parseError) {
+                        console.error('JSON解析失败:', parseError, '尝试修复JSON...');
+                        
+                        const fixedData = tryFixTruncatedJson(messageData.data);
+                        if (fixedData) {
+                            messageContent = JSON.parse(fixedData);
+                            console.log('JSON修复成功');
+                        } else {
+                            console.error('无法修复JSON，原始数据:', messageData.data);
+                            return;
+                        }
+                    }
+                    
+                    if (!messageContent || typeof messageContent !== 'object') {
+                        console.warn('解析后的消息内容无效');
+                        return;
+                    }
+
+                    const roomName = messageContent.room_name || messageContent.roomName;
+                    const roomId = messageContent.room_id || messageContent.roomId;
+                    
+                    if (roomName && roomId) {
+                        triggerRoomBreathing(roomName);
+                        
+                        handleNewMessageNotification({
+                            roomId: roomId,
+                            roomName: roomName,
+                            messageType: messageData.code
+                        });
+                    }
+                } catch (error) {
+                    console.error('解析其他消息数据失败:', error, '原始数据:', messageData.data);
+                }
+            }
+
+            // 发送确认帧
+            if (messageData.ask === true && messageData.msgId) {
+                console.log(`[${new Date().toLocaleString()}] 检测到需要确认的消息（msgId: ${messageData.msgId}），准备发送确认帧...`);
+                sendAckFrame(state.websocket, messageData.msgId);
+            }
+        } catch (error) {
+            console.error('处理解密消息失败:', error, '消息数据:', messageData);
+        }
+    }
+
+    // 辅助函数：检查JSON字符串是否完整
+    function isValidJsonString(str) {
+        try {
+            JSON.parse(str);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    // 辅助函数：尝试修复截断的JSON
+    function tryFixTruncatedJson(str) {
+        if (typeof str !== 'string') return null;
+        
+        // 移除前后空白
+        str = str.trim();
+        
+        // 针对具体错误模式进行修复
+        
+        // 模式1: 截断的URL字符串
+        if (str.includes('"https:\\/\\/asset') && str.endsWith('"')) {
+            // 这是完整的字符串，可能是其他问题
+            return str;
+        }
+        
+        if (str.includes('"https:\\/\\/asset') && !str.endsWith('"')) {
+            // 修复截断的URL字符串
+            let fixed = str;
+            
+            // 找到最后一个引号位置
+            let lastQuotePos = str.lastIndexOf('"');
+            if (lastQuotePos > 0) {
+                // 从最后一个引号开始修复
+                fixed = str.substring(0, lastQuotePos) + '"';
+            } else {
+                // 添加缺失的引号
+                fixed = str + '"';
+            }
+            
+            // 确保JSON对象完整
+            if (fixed.includes('"msg_file":"')) {
+                // 找到最后一个逗号或冒号后的位置
+                let parts = fixed.split(',');
+                let lastPart = parts[parts.length - 1];
+                
+                if (lastPart.includes('"msg_file":"') && !lastPart.includes('"}')) {
+                    // 修复msg_file字段
+                    let msgFileMatch = lastPart.match(/"msg_file":"([^"]*)"?/);
+                    if (msgFileMatch) {
+                        // 确保msg_file字段完整
+                        let completeMsgFile = '"msg_file":"' + msgFileMatch[1] + '"';
+                        parts[parts.length - 1] = completeMsgFile;
+                        fixed = parts.join(',');
+                    }
+                }
+            }
+            
+            // 确保对象闭合
+            if (!fixed.endsWith('}')) {
+                fixed += '}';
+            }
+            
+            // 验证修复后的JSON
+            if (isValidJsonString(fixed)) {
+                console.log('修复截断URL JSON成功');
+                return fixed;
+            }
+        }
+        
+        // 模式2: 一般对象截断
+        if (str.startsWith('{') && !str.endsWith('}')) {
+            let fixed = str;
+            
+            // 计算需要多少闭合括号
+            let openBraces = (str.match(/\{/g) || []).length;
+            let closeBraces = (str.match(/\}/g) || []).length;
+            
+            // 添加缺失的闭合括号
+            while (closeBraces < openBraces) {
+                fixed += '}';
+                closeBraces++;
+            }
+            
+            // 修复不完整的字符串
+            let openQuotes = (fixed.match(/"/g) || []).length;
+            if (openQuotes % 2 !== 0) {
+                // 找到最后一个不完整的字符串
+                let lastColon = fixed.lastIndexOf(':');
+                if (lastColon > 0) {
+                    let afterColon = fixed.substring(lastColon + 1);
+                    if (afterColon.includes('"') && !afterColon.endsWith('"')) {
+                        fixed += '"';
+                    }
+                }
+            }
+            
+            // 验证修复后的JSON
+            if (isValidJsonString(fixed)) {
+                console.log('修复截断对象JSON成功');
+                return fixed;
+            }
+        }
+        
+        // 模式3: 数组截断
+        if (str.startsWith('[') && !str.endsWith(']')) {
+            let fixed = str + ']';
+            if (isValidJsonString(fixed)) {
+                console.log('修复截断数组JSON成功');
+                return fixed;
+            }
+        }
+        
+        // 模式4: 使用正则表达式修复常见截断模式
+        try {
+            // 修复不完整的键值对
+            let patterns = [
+                /("[^"]*":"[^"]*)$/,  // 不完整的字符串值
+                /("[^"]*":\d*)$/,      // 不完整的数字值
+                /("[^"]*":true)$/,     // 不完整的布尔值
+                /("[^"]*":false)$/,    // 不完整的布尔值
+                /("[^"]*":null)$/      // 不完整的null值
+            ];
+            
+            for (let pattern of patterns) {
+                let match = str.match(pattern);
+                if (match) {
+                    let fixed = str;
+                    if (match[1].endsWith(':')) {
+                        fixed += '""'; // 添加空字符串
+                    } else {
+                        fixed += '"';  // 添加闭合引号
+                    }
+                    
+                    // 确保对象闭合
+                    if (fixed.startsWith('{') && !fixed.endsWith('}')) {
+                        fixed += '}';
+                    }
+                    
+                    if (isValidJsonString(fixed)) {
+                        console.log('修复键值对JSON成功');
+                        return fixed;
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('正则修复失败:', e);
+        }
+        
+        console.warn('无法修复JSON:', str);
+        return null;
+    }
+
+    /**
+     * 触发房间卡片的呼吸闪烁效果
+     * @param {string} roomName - 房间名称
+     */
+    function triggerRoomBreathing(roomName) {
+        const roomCards = document.querySelectorAll('.room-card');
+        roomCards.forEach(card => {
+            const cardName = card.querySelector('.name').textContent.trim();
+            if (cardName === roomName) {
+                // 添加呼吸闪烁动画
+                card.classList.add('breathing');
+                
+                // 5秒后移除动画
+                setTimeout(() => {
+                    card.classList.remove('breathing');
+                }, 5000);
+
+                console.log(`触发房间 [${roomName}] 的呼吸闪烁效果`);
+            }
+        });
+    }
+
+    /**
+     * 连接WebSocket（使用login02.py的完整逻辑）
      */
     function connectWebSocket() {
         if (state.websocket) {
@@ -2730,52 +3373,58 @@ document.addEventListener('DOMContentLoaded', () => {
 
         state.websocket.onmessage = (event) => {
             const message = event.data;
-            console.log(`[${new Date().toLocaleString()}] 收到WebSocket消息:`, message.length > 50 ? message.substring(0, 50) + '...' : message);
-            console.log(`[调试] 消息长度: ${message.length}, 消息类型: ${typeof message}`);
+            console.log(`[${new Date().toLocaleString()}] 收到WebSocket消息:`, 
+                       message.length > 50 ? message.substring(0, 50) + '...' : message);
 
+            // 处理心跳回复
             if (message.startsWith("time") && message.length === 17) {
-                console.log("【消息类型：心跳回执】");
-                 ui.heartbeatStatus.textContent = `心跳: ${Date.now() - parseInt(message.substring(4), 10)}ms`;
+                const sendTime = parseInt(message.substring(4));
+                const delay = Date.now() - sendTime;
+                console.log(`心跳延迟: ${delay} 毫秒`);
+                ui.heartbeatStatus.textContent = `心跳: ${delay}ms`;
                 return;
             }
 
-            console.log("【消息类型：业务消息】");
-            if (isNewMessage(message)) {
-                // 尝试解析消息数据
-                let messageData = { roomId: state.current_room_id };
+            // 处理加密的消息
+            try {
+                if (!message || typeof message !== 'string') {
+                    console.warn('收到空或无效的消息');
+                    return;
+                }
+
+                const decrypted = aesDecrypt(message, config.secret_key);
+                if (!decrypted) {
+                    console.error('消息解密失败');
+                    return;
+                }
+
+                // 清理解密后的数据
+                const cleanData = decrypted.trim();
+                if (!cleanData) {
+                    console.warn('解密后的数据为空');
+                    return;
+                }
+
+                let messageData;
                 try {
-                    messageData = JSON.parse(message);
-                } catch (e) {
-                    console.log("消息不是JSON格式，尝试提取roomId");
-                    // 使用更宽松的正则表达式提取roomId
-                    const roomIdMatch = message.match(/roomId"?:"?([0-9]+)/);
-                    if (roomIdMatch && roomIdMatch[1]) {
-                        messageData.roomId = roomIdMatch[1];
-                        console.log(`[调试] 从非JSON消息中提取到roomId: ${messageData.roomId}`);
-                    }
+                    messageData = JSON.parse(cleanData);
+                } catch (parseError) {
+                    console.error('JSON解析失败:', parseError, '原始数据:', cleanData.substring(0, 200));
+                    return;
                 }
 
-                console.log(`[调试] 即将处理新消息通知，messageData:`, messageData);
-                handleNewMessageNotification(messageData);
-
-                if (state.current_room_id) {
-                    fetchVoiceMessages(state.current_room_id).then(messages => {
-                        if (messages.length > 0) {
-                            console.log("收到新消息后，获取到最新语音消息");
-                            renderVoiceMessages(messages);
-
-                            const lastMessage = ui.chatMessages.lastElementChild;
-                            if (lastMessage) {
-                                lastMessage.classList.add('new-message-animation');
-                                setTimeout(() => {
-                                    lastMessage.classList.remove('new-message-animation');
-                                }, 1000);
-                            }
-                        }
-                    });
-                } else {
-                    console.log("未选择房间，暂不刷新语音消息列表");
+                if (!messageData || typeof messageData !== 'object') {
+                    console.warn('解析后的消息不是有效对象');
+                    return;
                 }
+
+                console.log(`[${new Date().toLocaleString()}] 解密并解析后的消息:`, messageData);
+                
+                // 处理解密后的消息
+                handleDecryptedMessage(messageData);
+
+            } catch (error) {
+                console.error('消息处理失败:', error);
             }
         };
 
@@ -2789,6 +3438,15 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error("WebSocket发生错误:", error);
             state.websocket.close(); // 触发 onclose 中的重连逻辑
         };
+    }
+
+    /**
+     * 滚动到最新消息
+     */
+    function scrollToLatestMessage() {
+        if (ui.chatMessages) {
+            ui.chatMessages.scrollTop = ui.chatMessages.scrollHeight;
+        }
     }
 
     /**
