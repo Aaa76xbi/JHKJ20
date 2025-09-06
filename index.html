@@ -754,16 +754,7 @@
             font-weight: 300;
         }
 
-        .voice-unread {
-            position: absolute;
-            top: -4px;
-            right: -4px;
-            width: 10px;
-            height: 10px;
-            background-color: var(--red-tag-color);
-            border: 1px solid var(--card-bg);
-            border-radius: 50%;
-        }
+
 
         /* 聊天对话框底部区域 */
         .chat-footer {
@@ -884,7 +875,7 @@
                 <span id="current-time">13:13:32</span>
                 <span id="current-date">08月26日</span>
                 <span>通讯: <span class="status-ok">正常</span></span>
-                <span id="heartbeat-status">心跳: 0ms</span>
+                <span id="heartbeat-status">延迟: 0ms</span>
             </div>
             <div class="header-center">
                 <img src="https://oss.11yzh.com/uploads/image/20250829/f84ef2dd84e8ff52579ec07c7287c092.png" alt="Logo">
@@ -2020,7 +2011,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             </div>
                             <div class="message-voice" style="${voiceBarStyle}">
                                 <span class="voice-duration">${displayDuration}秒</span>
-                                <button class="voice-player" data-audio-src="${message.msgFile.trim()}">
+                                <button class="voice-player" data-audio-src="${(message.roomFile || message.msgFile).trim()}">
                                     ▶
                                 </button>
                             </div>
@@ -2038,11 +2029,10 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <span class="message-time">${formattedTime}</span>
                             </div>
                             <div class="message-voice" style="${voiceBarStyle}">
-                                <button class="voice-player" data-audio-src="${message.msgFile.trim()}">
+                                <button class="voice-player" data-audio-src="${(message.roomFile || message.msgFile).trim()}">
                                     ▶
                                 </button>
                                 <span class="voice-duration">${displayDuration}秒</span>
-                                ${message.isRead === 0 ? '<div class="voice-unread"></div>' : ''}
                             </div>
                         </div>
                     </div>
@@ -2061,6 +2051,247 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 滚动到底部
         ui.chatMessages.scrollTop = ui.chatMessages.scrollHeight;
+    }
+
+    /**
+     * 转义HTML特殊字符，防止XSS攻击
+     * @param {string} text - 需要转义的文本
+     * @returns {string} - 转义后的文本
+     */
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    /**
+     * 将新文本消息直接添加到当前聊天框
+     * @param {Object} textData - 文本消息数据
+     */
+    function addNewTextMessageToChat(textData) {
+        console.log('🔄 正在将新文本消息添加到当前聊天框...');
+        
+        try {
+            // 格式化时间
+            const date = new Date();
+            const formattedTime = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+            
+            // 获取消息内容
+            const content = textData.content || '';
+            
+            if (!content.trim()) {
+                console.warn('新文本消息内容为空');
+                return;
+            }
+            
+            // 设置显示名称和头像
+            const displayName = textData.room_name || '未知房间';
+            const avatarText = displayName.charAt(0);
+            
+            // 判断消息来源（不是自己发送的）
+            const isSelfMessage = false; // 新收到的消息都是别人发的
+            const messageItemClass = isSelfMessage ? 'message-item self-message' : 'message-item';
+            
+            // 创建消息HTML
+            let messageHTML;
+            if (isSelfMessage) {
+                messageHTML = `
+                    <div class="${messageItemClass}">
+                        <div class="message-content">
+                            <div class="message-header">
+                                <span class="message-time">${formattedTime}</span>
+                                <span class="message-name">${displayName}</span>
+                            </div>
+                            <div class="message-text">${escapeHtml(content)}</div>
+                        </div>
+                        <div class="message-avatar">${avatarText}</div>
+                    </div>
+                `;
+            } else {
+                messageHTML = `
+                    <div class="${messageItemClass}">
+                        <div class="message-avatar">${avatarText}</div>
+                        <div class="message-content">
+                            <div class="message-header">
+                                <span class="message-name">${displayName}</span>
+                                <span class="message-time">${formattedTime}</span>
+                            </div>
+                            <div class="message-text">${escapeHtml(content)}</div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // 添加到聊天框
+            ui.chatMessages.insertAdjacentHTML('beforeend', messageHTML);
+            
+            // 滚动到底部
+            scrollToLatestMessage();
+            
+            console.log('✅ 新文本消息已成功添加到聊天框');
+            
+        } catch (error) {
+            console.error('添加新文本消息到聊天框失败:', error);
+            // 如果直接添加失败，则回退到重新获取消息列表
+            if (typeof fetchMessages === 'function') {
+                fetchMessages(state.current_room_id).then(messages => {
+                    if (messages && messages.length > 0) {
+                        renderMessages(messages);
+                        scrollToLatestMessage();
+                    }
+                }).catch(err => {
+                    console.error('回退方案也失败:', err);
+                });
+            }
+        }
+    }
+
+    /**
+     * 刷新当前聊天框的消息数据
+     */
+    function refreshCurrentChatMessages() {
+        if (!state.current_room_id) {
+            console.log('当前没有打开聊天框，跳过刷新');
+            return;
+        }
+
+        console.log(`🔄 刷新房间 ${state.current_room_id} 的消息数据...`);
+        
+        // 同时刷新语音消息和文本消息
+        Promise.all([
+            fetchVoiceMessages(state.current_room_id),
+            fetchMessages(state.current_room_id)
+        ]).then(([voiceMessages, textMessages]) => {
+            console.log('✅ 获取到最新数据:', {
+                voiceMessages: voiceMessages?.length || 0,
+                textMessages: textMessages?.length || 0
+            });
+            
+            // 重新渲染消息
+            if (voiceMessages && voiceMessages.length > 0) {
+                renderVoiceMessages(voiceMessages);
+            }
+            if (textMessages && textMessages.length > 0) {
+                renderMessages(textMessages);
+            }
+            
+            // 滚动到底部
+            scrollToLatestMessage();
+            
+        }).catch(err => {
+            console.error('刷新消息数据失败:', err);
+        });
+    }
+
+    /**
+     * 将新语音消息直接添加到当前聊天框
+     * @param {Object} voiceData - 语音消息数据
+     */
+    function addNewVoiceMessageToChat(voiceData) {
+        console.log('🔄 正在将新语音消息添加到当前聊天框...');
+        
+        try {
+            // 格式化时间
+            const date = new Date();
+            const formattedTime = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+            
+            // 获取语音URL
+            const voiceUrl = voiceData.room_file || voiceData.msg_file;
+            
+            if (!voiceUrl || !voiceUrl.trim()) {
+                console.warn('新语音消息没有有效的URL');
+                return;
+            }
+            
+            // 计算语音时长
+            const duration = voiceData.duration || 0;
+            
+            // 计算语音条宽度
+            const baseWidth = 60;
+            const additionalWidth = Math.min(duration * 10, 240);
+            const voiceBarWidth = Math.max(baseWidth + additionalWidth, 80);
+            const voiceBarStyle = `width: ${voiceBarWidth}px;`;
+            
+            // 设置显示名称和头像
+            const displayName = voiceData.room_name || '未知房间';
+            const avatarText = displayName.charAt(0);
+            
+            // 判断消息来源（不是自己发送的）
+            const isSelfMessage = false; // 新收到的消息都是别人发的
+            const messageItemClass = isSelfMessage ? 'message-item self-message' : 'message-item';
+            
+            // 创建消息HTML
+            let messageHTML;
+            if (isSelfMessage) {
+                messageHTML = `
+                    <div class="${messageItemClass}">
+                        <div class="message-content">
+                            <div class="message-header">
+                                <span class="message-time">${formattedTime}</span>
+                                <span class="message-name">${displayName}</span>
+                            </div>
+                            <div class="message-voice" style="${voiceBarStyle}">
+                                <span class="voice-duration">${duration}秒</span>
+                                <button class="voice-player" data-audio-src="${voiceUrl.trim()}" data-is-read="${message.isRead || 0}">
+                                    ▶
+                                </button>
+                            </div>
+                        </div>
+                        <div class="message-avatar">${avatarText}</div>
+                    </div>
+                `;
+            } else {
+                messageHTML = `
+                    <div class="${messageItemClass}">
+                        <div class="message-avatar">${avatarText}</div>
+                        <div class="message-content">
+                            <div class="message-header">
+                                <span class="message-name">${displayName}</span>
+                                <span class="message-time">${formattedTime}</span>
+                            </div>
+                            <div class="message-voice" style="${voiceBarStyle}">
+                                <button class="voice-player" data-audio-src="${voiceUrl.trim()}" data-is-read="${message.isRead || 0}">
+                                    ▶
+                                </button>
+                                <span class="voice-duration">${duration}秒</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // 添加到聊天框
+            ui.chatMessages.insertAdjacentHTML('beforeend', messageHTML);
+            
+            // 为新添加的语音播放器绑定点击事件
+            const newPlayer = ui.chatMessages.querySelector('.message-item:last-child .voice-player');
+            if (newPlayer) {
+                newPlayer.addEventListener('click', function() {
+                    const audioSrc = this.getAttribute('data-audio-src');
+                    playAudio(audioSrc, this);
+                });
+            }
+            
+            // 滚动到底部
+            scrollToLatestMessage();
+            
+            console.log('✅ 新语音消息已成功添加到聊天框');
+            
+        } catch (error) {
+            console.error('添加新语音消息到聊天框失败:', error);
+            // 如果直接添加失败，则回退到重新获取消息列表
+            if (typeof fetchVoiceMessages === 'function') {
+                fetchVoiceMessages(state.current_room_id).then(messages => {
+                    if (messages && messages.length > 0) {
+                        renderVoiceMessages(messages);
+                        scrollToLatestMessage();
+                    }
+                }).catch(err => {
+                    console.error('回退方案也失败:', err);
+                });
+            }
+        }
     }
 
     /**
@@ -2840,6 +3071,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            // 消息去重：检查是否已经处理过这条消息
+            const msgId = messageData.msgId;
+            if (msgId) {
+                if (state.processed_messages.has(msgId)) {
+                    console.log(`[去重] 消息 ${msgId} 已处理过，跳过`);
+                    return;
+                }
+                state.processed_messages.set(msgId, Date.now());
+                
+                // 清理30分钟前的消息记录
+                const expireTime = Date.now() - (state.message_expire_sec * 1000);
+                for (const [id, timestamp] of state.processed_messages.entries()) {
+                    if (timestamp < expireTime) {
+                        state.processed_messages.delete(id);
+                    }
+                }
+            }
+
             console.log(`[${new Date().toLocaleString()}] 处理解密消息:`, messageData);
 
             // 根据消息类型处理
@@ -2848,8 +3097,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            // 标记消息是否已被处理
+            let messageProcessed = false;
+
             // 处理语音消息
-            if (messageData.code === 'voice') {
+            if (messageData.code === 'voice' && !messageProcessed) {
                 try {
                     if (!messageData.data) {
                         console.warn('语音消息数据为空');
@@ -2881,12 +3133,14 @@ document.addEventListener('DOMContentLoaded', () => {
                                     // 提取基本结构
                                     const roomIdMatch = dataStr.match(/"room_id":(\d+)/);
                                     const roomNameMatch = dataStr.match(/"room_name":"([^"]*)"/);
+                                    const roomFileMatch = dataStr.match(/"room_file":"([^"]*)"/);
                                     const msgFileMatch = dataStr.match(/"msg_file":"([^"]*)"/);
                                     
                                     if (roomIdMatch && roomNameMatch) {
                                         voiceData = {
                                             room_id: parseInt(roomIdMatch[1]),
                                             room_name: roomNameMatch[1],
+                                            room_file: roomFileMatch ? roomFileMatch[1] : '',
                                             msg_file: msgFileMatch ? msgFileMatch[1] : '',
                                             msg_id: 'fixed_' + Date.now(),
                                             is_root: 0,
@@ -2898,6 +3152,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                         voiceData = {
                                             room_id: 0,
                                             room_name: '未知房间',
+                                            room_file: '',
                                             msg_file: '',
                                             msg_id: 'minimal_' + Date.now(),
                                             is_root: 0,
@@ -2913,14 +3168,15 @@ document.addEventListener('DOMContentLoaded', () => {
                                     console.log('通用修复成功');
                                 } else {
                                     console.error('无法修复JSON，使用最小数据');
-                                    voiceData = {
-                                        room_id: 0,
-                                        room_name: '未知房间',
-                                        msg_file: '',
-                                        msg_id: 'minimal_' + Date.now(),
-                                        is_root: 0,
-                                        duration: 0
-                                    };
+                        voiceData = {
+                            room_id: 0,
+                            room_name: '未知房间',
+                            room_file: '',
+                            msg_file: '',
+                            msg_id: 'minimal_' + Date.now(),
+                            is_root: 0,
+                            duration: 0
+                        };
                                 }
                             }
                             
@@ -2956,42 +3212,85 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     console.log('\n===== 语音消息详情 =====');
                     console.log(`房间名称: ${voiceData.room_name || '未知'}`);
-                    console.log(`语音URL: ${voiceData.msg_file || '无'}`);
+                    console.log(`语音URL: ${voiceData.room_file || voiceData.msg_file || '无'}`);
                     console.log(`语音时长: ${voiceData.duration || 0} 秒`);
                     console.log(`是否已读: ${voiceData.is_read === 1 ? '是' : '否'}`);
                     console.log('=======================\n');
 
                     const roomName = voiceData.room_name;
                     const roomId = voiceData.room_id;
+                    const voiceUrl = voiceData.room_file || voiceData.msg_file; // 优先使用room_file字段
                     
                     if (roomName) {
                         triggerRoomBreathing(roomName);
                         
-                        handleNewMessageNotification({
-                            roomId: roomId,
-                            roomName: roomName,
-                            messageType: 'voice'
-                        });
+                        // 先播放提示音，然后播放语音
+                        if (voiceUrl && voiceUrl.trim() !== '') {
+                            console.log('🎵 准备播放新语音消息...');
+                            console.log('🎵 语音URL来源:', voiceData.room_file ? 'room_file' : 'msg_file');
+                            console.log('🎵 语音URL:', voiceUrl);
+                            
+                            // 先播放提示音
+                            notificationSound.play().then(() => {
+                                console.log('✅ 提示音播放完成');
+                                
+                                // 延迟500ms后播放语音
+                                setTimeout(() => {
+                                    playVoice(voiceUrl);
+                                }, 500);
+                            }).catch(e => {
+                                console.error('提示音播放失败:', e);
+                                // 如果提示音播放失败，直接播放语音
+                                playVoice(voiceUrl);
+                            });
+                        } else {
+                            // 如果没有语音URL，只播放提示音
+                            notificationSound.play().catch(e => console.error('提示音播放失败:', e));
+                        }
+                        
+                        // 只有在房间不匹配时才增加未读计数
+                        const currentRoomId = Number(state.current_room_id);
+                        const messageRoomId = Number(roomId);
+                        if (currentRoomId !== messageRoomId) {
+                            // 显示通知并增加未读计数
+                            handleNewMessageNotification({
+                                roomId: roomId,
+                                roomName: roomName,
+                                messageType: 'voice'
+                            });
+                        }
                     }
 
-                    // 如果当前在对应的房间，刷新消息列表
-                    if (state.current_room_id === roomId && typeof fetchVoiceMessages === 'function') {
+                    // 如果当前在对应的房间，直接重新获取并渲染该房间的消息
+                    console.log('🔍 调试: state.current_room_id =', state.current_room_id, 'roomId =', roomId, '类型:', typeof state.current_room_id, typeof roomId);
+                    // 强制转换为数字类型进行比较
+                    const currentRoomId = Number(state.current_room_id);
+                    const messageRoomId = Number(roomId);
+                    if (currentRoomId === messageRoomId) {
+                        console.log('🔄 收到新语音消息，立即刷新当前聊天框...');
+                        
+                        // 直接调用现有的获取和渲染函数
                         fetchVoiceMessages(state.current_room_id).then(messages => {
-                            if (messages && messages.length > 0) {
+                            if (messages) {
+                                console.log('✅ 获取到新语音消息:', messages.length, '条');
                                 renderVoiceMessages(messages);
                                 scrollToLatestMessage();
                             }
                         }).catch(err => {
                             console.error('获取语音消息失败:', err);
                         });
+                    } else {
+                        console.log('⚠️ 房间不匹配，增加未读计数');
                     }
+                    
+                    messageProcessed = true; // 标记消息已处理
                 } catch (error) {
                     console.error('解析语音消息数据失败:', error, '原始数据:', messageData.data);
                 }
             }
 
             // 处理文本消息
-            if (messageData.code === 'text') {
+            if (messageData.code === 'text' && !messageProcessed) {
                 try {
                     if (!messageData.data) {
                         console.warn('文本消息数据为空');
@@ -3099,31 +3398,48 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (roomName) {
                         triggerRoomBreathing(roomName);
                         
-                        handleNewMessageNotification({
-                            roomId: roomId,
-                            roomName: roomName,
-                            messageType: 'text'
-                        });
+                        // 只有在房间不匹配时才增加未读计数
+                        const currentRoomId = Number(state.current_room_id);
+                        const messageRoomId = Number(roomId);
+                        if (currentRoomId !== messageRoomId) {
+                            handleNewMessageNotification({
+                                roomId: roomId,
+                                roomName: roomName,
+                                messageType: 'text'
+                            });
+                        }
                     }
 
-                    // 如果当前在对应的房间，刷新消息列表
-                    if (state.current_room_id === roomId && typeof fetchVoiceMessages === 'function') {
-                        fetchVoiceMessages(state.current_room_id).then(messages => {
-                            if (messages && messages.length > 0) {
-                                renderVoiceMessages(messages);
+                    // 如果当前在对应的房间，直接重新获取并渲染该房间的消息
+                    console.log('🔍 调试文本: state.current_room_id =', state.current_room_id, 'roomId =', roomId, '类型:', typeof state.current_room_id, typeof roomId);
+                    // 强制转换为数字类型进行比较
+                    const currentRoomId = Number(state.current_room_id);
+                    const messageRoomId = Number(roomId);
+                    if (currentRoomId === messageRoomId) {
+                        console.log('🔄 收到新文本消息，立即刷新当前聊天框...');
+                        
+                        // 直接调用现有的获取和渲染函数
+                        fetchMessages(state.current_room_id).then(messages => {
+                            if (messages) {
+                                console.log('✅ 获取到新文本消息:', messages.length, '条');
+                                renderMessages(messages);
                                 scrollToLatestMessage();
                             }
                         }).catch(err => {
                             console.error('获取文本消息失败:', err);
                         });
+                    } else {
+                        console.log('⚠️ 房间不匹配，不刷新文本聊天框');
                     }
+                    
+                    messageProcessed = true; // 标记消息已处理
                 } catch (error) {
                     console.error('解析文本消息数据失败:', error, '原始数据:', messageData.data);
                 }
             }
 
             // 处理其他类型的消息
-            if (messageData.code && messageData.data) {
+            if (messageData.code && messageData.data && !messageProcessed) {
                 try {
                     let messageContent;
                     try {
@@ -3159,12 +3475,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (roomName && roomId) {
                         triggerRoomBreathing(roomName);
                         
-                        handleNewMessageNotification({
-                            roomId: roomId,
-                            roomName: roomName,
-                            messageType: messageData.code
-                        });
+                        // 只有在房间不匹配时才增加未读计数
+                        const currentRoomId = Number(state.current_room_id);
+                        const messageRoomId = Number(roomId);
+                        if (currentRoomId !== messageRoomId) {
+                            handleNewMessageNotification({
+                                roomId: roomId,
+                                roomName: roomName,
+                                messageType: messageData.code
+                            });
+                        }
                     }
+                    
+                    messageProcessed = true; // 标记消息已处理
                 } catch (error) {
                     console.error('解析其他消息数据失败:', error, '原始数据:', messageData.data);
                 }
@@ -3220,7 +3543,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // 确保JSON对象完整
-            if (fixed.includes('"msg_file":"')) {
+            if (fixed.includes('"msg_file":"') || fixed.includes('"room_file":"')) {
                 // 找到最后一个逗号或冒号后的位置
                 let parts = fixed.split(',');
                 let lastPart = parts[parts.length - 1];
@@ -3232,6 +3555,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         // 确保msg_file字段完整
                         let completeMsgFile = '"msg_file":"' + msgFileMatch[1] + '"';
                         parts[parts.length - 1] = completeMsgFile;
+                        fixed = parts.join(',');
+                    }
+                }
+                
+                if (lastPart.includes('"room_file":"') && !lastPart.includes('"}')) {
+                    // 修复room_file字段
+                    let roomFileMatch = lastPart.match(/"room_file":"([^"]*)"?/);
+                    if (roomFileMatch) {
+                        // 确保room_file字段完整
+                        let completeRoomFile = '"room_file":"' + roomFileMatch[1] + '"';
+                        parts[parts.length - 1] = completeRoomFile;
                         fixed = parts.join(',');
                     }
                 }
@@ -3381,7 +3715,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const sendTime = parseInt(message.substring(4));
                 const delay = Date.now() - sendTime;
                 console.log(`心跳延迟: ${delay} 毫秒`);
-                ui.heartbeatStatus.textContent = `心跳: ${delay}ms`;
+                ui.heartbeatStatus.textContent = `延迟: ${delay}ms`;
                 return;
             }
 
